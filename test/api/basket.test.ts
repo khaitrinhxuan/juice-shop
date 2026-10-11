@@ -128,16 +128,22 @@ void describe('/rest/basket/:id/checkout', () => {
     assert.equal(res.status, 401)
   })
 
-  void it('POST placing an order for an existing basket returns orderId', async () => {
-    const res = await request(app).post('/rest/basket/1/checkout').set(authHeader)
+  void it('POST placing an order for the own basket returns orderId', async () => {
+    const res = await request(app).post('/rest/basket/2/checkout').set(authHeader)
     assert.equal(res.status, 200)
     assert.ok(res.body.orderConfirmation !== undefined)
   })
 
+  void it('POST placing an order for a basket of another user is rejected', async () => {
+    const res = await request(app).post('/rest/basket/1/checkout').set(authHeader)
+    assert.equal(res.status, 403)
+    assert.equal(res.body.status, 'error')
+  })
+
   void it('POST placing an order for a non-existing basket fails', async () => {
     const res = await request(app).post('/rest/basket/42/checkout').set(authHeader)
-    assert.equal(res.status, 500)
-    assert.ok(res.text.includes('Error: Basket with id=42 does not exist.'))
+    assert.equal(res.status, 403)
+    assert.equal(res.body.status, 'error')
   })
 
   void it('POST placing an order for a basket with a negative total cost is possible', async () => {
@@ -147,7 +153,7 @@ void describe('/rest/basket/:id/checkout', () => {
       .send({ BasketId: 2, ProductId: 10, quantity: -100 })
     assert.equal(itemRes.status, 200)
 
-    const res = await request(app).post('/rest/basket/3/checkout').set(authHeader)
+    const res = await request(app).post('/rest/basket/2/checkout').set(authHeader)
     assert.equal(res.status, 200)
     assert.ok(res.body.orderConfirmation !== undefined)
   })
@@ -167,23 +173,23 @@ void describe('/rest/basket/:id/checkout', () => {
 
   void describe('error cases', () => {
     void it('should return 500 if QuantityModel.findOne fails during checkout', async (t) => {
-      const { token } = await login(app, { email: 'bjoern.kimminich@gmail.com', password: 'bW9jLmxpYW1nQGhjaW5pbW1pay5ucmVvamI=' })
+      const { token, bid } = await login(app, { email: 'bjoern.kimminich@gmail.com', password: 'bW9jLmxpYW1nQGhjaW5pbW1pay5ucmVvamI=' })
       const authHeader = { Authorization: 'Bearer ' + token, 'content-type': 'application/json' }
-      await request(app).post('/api/BasketItems').set(authHeader).send({ BasketId: 4, ProductId: 1, quantity: 1 })
+      await request(app).post('/api/BasketItems').set(authHeader).send({ BasketId: bid, ProductId: 1, quantity: 1 })
 
       t.mock.method(QuantityModel, 'findOne', () => { throw new Error('Quantity error') })
-      const res = await request(app).post('/rest/basket/4/checkout').set(authHeader)
+      const res = await request(app).post('/rest/basket/' + bid + '/checkout').set(authHeader)
       assert.equal(res.status, 500)
       assert.match(res.text, /Quantity error/)
     })
 
     void it('should return 500 if WalletModel.findOne fails during checkout', async (t) => {
-      const { token } = await login(app, { email: 'admin@' + config.get<string>('application.domain'), password: 'admin123' })
+      const { token, bid } = await login(app, { email: 'admin@' + config.get<string>('application.domain'), password: 'admin123' })
       const adminAuthHeader = { Authorization: 'Bearer ' + token, 'content-type': 'application/json' }
-      await request(app).post('/api/BasketItems').set(adminAuthHeader).send({ BasketId: 1, ProductId: 1, quantity: 1 })
+      await request(app).post('/api/BasketItems').set(adminAuthHeader).send({ BasketId: bid, ProductId: 1, quantity: 1 })
       t.mock.method(WalletModel, 'findOne', () => { throw new Error('Wallet error') })
 
-      const res = await request(app).post('/rest/basket/1/checkout').set(adminAuthHeader).send({ orderDetails: { paymentId: 'wallet' }, UserId: 1 })
+      const res = await request(app).post('/rest/basket/' + bid + '/checkout').set(adminAuthHeader).send({ orderDetails: { paymentId: 'wallet' }, UserId: 1 })
       assert.equal(res.status, 500)
       assert.match(res.text, /Wallet error/)
     })

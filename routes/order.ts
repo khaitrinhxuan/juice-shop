@@ -32,11 +32,17 @@ interface Product {
 export function placeOrder () {
   return (req: Request, res: Response, next: NextFunction) => {
     const id = req.params.id
+    const customer = security.authenticatedUsers.from(req)
+    // BOLA guard: a customer may only check out the basket that belongs to them
+    if (customer == null || customer.bid == null || Number(customer.bid) !== Number(id) || customer.data.id == null) {
+      res.status(403).json({ status: 'error', message: 'Order can only be placed for your own basket.' })
+      return
+    }
+    const userId = customer.data.id
     BasketModel.findOne({ where: { id }, include: [{ model: ProductModel, paranoid: false, as: 'Products' }] })
       .then(async (basket: BasketModel | null) => {
         if (basket != null) {
-          const customer = security.authenticatedUsers.from(req)
-          const email = customer ? customer.data ? customer.data.email : '' : ''
+          const email = customer.data.email
           const orderId = security.hash(email).slice(0, 4) + '-' + utils.randomHexString(16)
           const pdfFile = `order_${orderId}.pdf`
           const { default: PDFDocument } = await import('pdfkit')
@@ -143,22 +149,20 @@ export function placeOrder () {
 
           challengeUtils.solveIf(challenges.negativeOrderChallenge, () => { return totalPrice < 0 })
 
-          if (req.body.UserId) {
-            if (req.body.orderDetails && req.body.orderDetails.paymentId === 'wallet') {
-              const wallet = await WalletModel.findOne({ where: { UserId: req.body.UserId } })
-              if ((wallet != null) && wallet.balance >= totalPrice) {
-                await WalletModel.decrement({ balance: totalPrice }, { where: { UserId: req.body.UserId } })
-              } else {
-                next(new Error('Insufficient wallet balance.'))
-                return
-              }
-            }
-            try {
-              await WalletModel.increment({ balance: totalPoints }, { where: { UserId: req.body.UserId } })
-            } catch (error: unknown) {
-              next(error)
+          if (req.body.orderDetails && req.body.orderDetails.paymentId === 'wallet') {
+            const wallet = await WalletModel.findOne({ where: { UserId: userId } })
+            if ((wallet != null) && wallet.balance >= totalPrice) {
+              await WalletModel.decrement({ balance: totalPrice }, { where: { UserId: userId } })
+            } else {
+              next(new Error('Insufficient wallet balance.'))
               return
             }
+          }
+          try {
+            await WalletModel.increment({ balance: totalPoints }, { where: { UserId: userId } })
+          } catch (error: unknown) {
+            next(error)
+            return
           }
 
           db.ordersCollection.insert({
